@@ -12,16 +12,16 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 # ─── Constants ────────────────────────────────────────────────────────────────
-BASE_URL  = "https://motus.dot.gov/customer/{}/account"
-COLUMNS   = [
+BASE_URL = "https://motus.dot.gov/customer/{}/account"
+COLUMNS = [
     "DOT Number", "Legal Business Name", "Doing Business As (DBA)",
     "Principal Place of Business", "Mailing Address", "Business Telephone No.",
     "Duns & Bradstreet", "Form of Business", "State Incorporated",
     "Business Email", "Official Name", "Title",
     "Contact Telephone No.", "Contact Email"
 ]
-HEADER_BG  = "1F4E78"
-HEADER_FG  = "FFFFFF"
+HEADER_BG = "1F4E78"
+HEADER_FG = "FFFFFF"
 GRID_COLOR = "D9D9D9"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -32,15 +32,15 @@ USER_AGENT = (
 # ─── Known field labels exactly as they appear on the page ───────────────────
 # Order matters: we search for these in sequence down the page.
 BUSINESS_FIELDS = [
-    ("legal_name",  "Legal Business Name"),
-    ("dba",         "Doing Business As (DBA) Name"),
-    ("principal",   "Principal Place of Business"),
-    ("mailing",     "Mailing Address"),
-    ("phone",       "Business Telephone No."),
-    ("duns",        "Duns & Bradstreet"),
-    ("form",        "Form of Business"),
-    ("state_inc",   "State Incorporated"),
-    ("email",       "Business Email"),
+    ("legal_name", "Legal Business Name"),
+    ("dba", "Doing Business As (DBA) Name"),
+    ("principal", "Principal Place of Business"),
+    ("mailing", "Mailing Address"),
+    ("phone", "Business Telephone No."),
+    ("duns", "Duns & Bradstreet"),
+    ("form", "Form of Business"),
+    ("state_inc", "State Incorporated"),
+    ("email", "Business Email"),
 ]
 
 # The four officials column headers that appear as a consecutive block
@@ -56,15 +56,15 @@ def get_lines(page):
 
 def extract_business_fields(lines, log):
     """
-    Walk lines sequentially.  When we see a known label, the NEXT line
-    that is NOT itself a known label is the value.  Blank/empty values
+    Walk lines sequentially. When we see a known label, the NEXT line
+    that is NOT itself a known label is the value. Blank/empty values
     on the page appear as the next label immediately — we handle that by
     storing "" (empty string) and moving on.
     """
     all_labels_lower = {lbl.lower() for _, lbl in BUSINESS_FIELDS}
     # Also add officials headers so we don't treat them as values
-    officials_lower  = {h.lower() for h in OFFICIALS_HEADERS}
-    skip_lower       = all_labels_lower | officials_lower
+    officials_lower = {h.lower() for h in OFFICIALS_HEADERS}
+    skip_lower = all_labels_lower | officials_lower
 
     label_lookup = {lbl.lower(): key for key, lbl in BUSINESS_FIELDS}
 
@@ -356,7 +356,7 @@ class App(tk.Tk):
                  relief="flat", font=("Consolas", 9)
                  ).grid(row=0, column=1, sticky="w")
 
-        tk.Label(row0, text="  Dir:", fg="#cccccc", bg="#2b2b2b",
+        tk.Label(row0, text="   Dir:", fg="#cccccc", bg="#2b2b2b",
                  font=("Segoe UI", 9)).grid(row=0, column=2, sticky="w", padx=(12,6))
         self.dir_var = tk.StringVar(value=os.path.expanduser("~\\Desktop"))
         tk.Entry(row0, textvariable=self.dir_var, width=26,
@@ -390,7 +390,7 @@ class App(tk.Tk):
         self.dot_input.insert("1.0", "4581886\n")
 
         self.start_btn = tk.Button(
-            self, text="⚡  Start Scraping Pipeline",
+            self, text="⚡   Start Scraping Pipeline",
             command=self._launch,
             bg="#1F4E78", fg="white", activebackground="#2d6fa3",
             font=("Segoe UI", 11, "bold"), relief="flat",
@@ -422,9 +422,9 @@ class App(tk.Tk):
     def _log(self, msg):
         def _write():
             self.log_box.config(state="normal")
-            ts   = datetime.now().strftime("%H:%M:%S")
+            ts = datetime.now().strftime("%H:%M:%S")
             line = f"[{ts}] {msg}\n"
-            tag  = "info"
+            tag = "info"
             if any(x in msg for x in ["[✓]", "[✅]"]):  tag = "ok"
             elif any(x in msg for x in ["[⚠]", "[!]"]): tag = "warn"
             elif "[✗]" in msg:                           tag = "err"
@@ -434,7 +434,7 @@ class App(tk.Tk):
         self.after(0, _write)
 
     def _launch(self):
-        raw  = self.dot_input.get("1.0", "end").strip()
+        raw = self.dot_input.get("1.0", "end").strip()
         dots = [d.strip() for d in raw.splitlines() if d.strip()]
         if not dots:
             messagebox.showwarning("No Input", "Enter at least one DOT number.")
@@ -445,7 +445,7 @@ class App(tk.Tk):
             fname += ".xlsx"
         filepath = os.path.join(self.dir_var.get(), fname)
 
-        self.start_btn.config(state="disabled", text="⏳  Running…")
+        self.start_btn.config(state="disabled", text="⏳   Running…")
         self.log_box.config(state="normal")
         self.log_box.delete("1.0", "end")
         self.log_box.config(state="disabled")
@@ -455,7 +455,7 @@ class App(tk.Tk):
                 run_pipeline(dots, filepath, self.headless_var.get(), self._log)
             finally:
                 self.after(0, lambda: self.start_btn.config(
-                    state="normal", text="⚡  Start Scraping Pipeline"))
+                    state="normal", text="⚡   Start Scraping Pipeline"))
 
         threading.Thread(target=worker, daemon=True).start()
 
