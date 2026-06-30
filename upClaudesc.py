@@ -2,8 +2,27 @@ import streamlit as st
 import time
 import os
 import re
+import subprocess
+import sys
 from datetime import datetime
-from playwright.sync_api import sync_playwright
+
+# ─── Streamlit Cloud Self-Healing Engine Setup ────────────────────────────────
+try:
+    from playwright.sync_api import sync_playwright
+except ModuleNotFoundError:
+    # Fallback to force direct pip extraction if container setup delays sync rules
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
+    from playwright.sync_api import sync_playwright
+
+# Automated binary detection script block
+try:
+    with sync_playwright() as p:
+        test_browser = p.chromium.launch(headless=True)
+        test_browser.close()
+except Exception:
+    # Triggers inside deployment containers to pull secure runtime environments 
+    os.system("playwright install chromium")
+
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -203,7 +222,6 @@ def run_pipeline(dot_numbers, filepath, log):
     log(f"[⚡] Pipeline start — {len(dot_numbers)} DOT number(s)")
 
     with sync_playwright() as pw:
-        # Optimized with standard flags to run inside Linux cloud instances smoothly
         browser = pw.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
@@ -297,7 +315,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# High-Contrast Professional Custom Styling Injector
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
@@ -317,7 +334,6 @@ st.title("⚡ USDOT Intelligence Scraper")
 st.caption("TTM Dispatch Automation Suite — Cloud Terminal Instance")
 st.markdown("---")
 
-# UI Configuration Split Setup
 col_left, col_right = st.columns([2, 1])
 
 with col_right:
@@ -334,11 +350,9 @@ with col_left:
 
 st.markdown("---")
 
-# Streamlit-compatible Logging Architecture Block
 st.markdown("### 📜 System Activity Log")
 log_container = st.empty()
 
-# Persistent tracking initialization for updates
 if "log_history" not in st.session_state:
     st.session_state.log_history = []
 
@@ -346,24 +360,20 @@ def web_log_writer(msg):
     ts = datetime.now().strftime("%H:%M:%S")
     formatted_line = f"[{ts}] {msg}"
     st.session_state.log_history.append(formatted_line)
-    # Output directly inside scrolling window
     log_container.code("\n".join(st.session_state.log_history), language="text")
 
-# Render historical records upon layout state shifts
 if st.session_state.log_history:
     log_container.code("\n".join(st.session_state.log_history), language="text")
 
-# Trigger Action Routine Block
 if st.button("⚡   Start Scraping Pipeline"):
     dots_list = [d.strip() for d in raw_dot_input.splitlines() if d.strip()]
     
     if not dots_list:
         st.error("Missing Parameter: Please supply one or more DOT sequence items before initiating run pipelines.")
     else:
-        st.session_state.log_history = [] # Reset old logs on new run
+        st.session_state.log_history = []
         temp_filepath = "cloud_output.xlsx"
         
-        # Execute underlying synchronous target sequence steps
         success = run_pipeline(dots_list, temp_filepath, web_log_writer)
         
         if success and os.path.exists(temp_filepath):
@@ -379,7 +389,6 @@ if st.button("⚡   Start Scraping Pipeline"):
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-            # Clean server memory temp files
             try:
                 os.remove(temp_filepath)
             except:
