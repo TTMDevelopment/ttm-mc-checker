@@ -1,6 +1,4 @@
-import tkinter as tk
-from tkinter import filedialog, scrolledtext, messagebox
-import threading
+import streamlit as st
 import time
 import os
 import re
@@ -30,7 +28,6 @@ USER_AGENT = (
 )
 
 # ─── Known field labels exactly as they appear on the page ───────────────────
-# Order matters: we search for these in sequence down the page.
 BUSINESS_FIELDS = [
     ("legal_name", "Legal Business Name"),
     ("dba", "Doing Business As (DBA) Name"),
@@ -43,7 +40,6 @@ BUSINESS_FIELDS = [
     ("email", "Business Email"),
 ]
 
-# The four officials column headers that appear as a consecutive block
 OFFICIALS_HEADERS = ["Official Name", "Title", "Telephone No", "Email"]
 
 # ─── Page text utilities ──────────────────────────────────────────────────────
@@ -57,12 +53,9 @@ def get_lines(page):
 def extract_business_fields(lines, log):
     """
     Walk lines sequentially. When we see a known label, the NEXT line
-    that is NOT itself a known label is the value. Blank/empty values
-    on the page appear as the next label immediately — we handle that by
-    storing "" (empty string) and moving on.
+    that is NOT itself a known label is the value.
     """
     all_labels_lower = {lbl.lower() for _, lbl in BUSINESS_FIELDS}
-    # Also add officials headers so we don't treat them as values
     officials_lower = {h.lower() for h in OFFICIALS_HEADERS}
     skip_lower = all_labels_lower | officials_lower
 
@@ -74,12 +67,11 @@ def extract_business_fields(lines, log):
         ll = lines[i].lower()
         if ll in label_lookup:
             key = label_lookup[ll]
-            # Look ahead for a value
             value = ""
             for j in range(i + 1, min(i + 4, len(lines))):
                 candidate = lines[j]
                 if candidate.lower() in skip_lower:
-                    break          # Next label — this field is blank
+                    break
                 value = candidate
                 break
             result[key] = value
@@ -90,21 +82,7 @@ def extract_business_fields(lines, log):
 
 
 def extract_officials(lines, log):
-    """
-    The page emits officials data in two consecutive blocks:
-        Official Name
-        Title
-        Telephone No
-        Email
-        BRANDON FLORES       ← values start here
-        OWNER
-        (phone value or blank)
-        (email value or blank)
-
-    Strategy: find the index where all four header strings appear
-    consecutively, then read the values that follow the last header.
-    """
-    # Normalize for searching
+    """Find officials data blocks and read consecutive values."""
     hdr_lower = [h.lower() for h in OFFICIALS_HEADERS]
     n = len(hdr_lower)
 
@@ -116,8 +94,6 @@ def extract_officials(lines, log):
             break
 
     if block_start is None:
-        # Fallback: find any partial run of the headers
-        log("[Officials] Exact block not found — trying partial match")
         for i, line in enumerate(lines):
             if line.lower() == hdr_lower[0]:
                 block_start = i
@@ -127,7 +103,6 @@ def extract_officials(lines, log):
         log("[Officials] ⚠ Header block not found in page text")
         return {"name": "N/A", "title": "N/A", "phone": "N/A", "email": "N/A"}
 
-    # Values start immediately after the last header in the block
     val_start = block_start + n
     log(f"[Officials] Header block at line {block_start}, values at {val_start}")
     log(f"[Officials] Value lines: {lines[val_start:val_start+6]}")
@@ -136,7 +111,6 @@ def extract_officials(lines, log):
         idx = val_start + offset
         if idx < len(lines):
             v = lines[idx]
-            # Reject footer/pagination noise
             if re.search(r"row(s)? (per page|selected)|^\d+[-–]\d+", v.lower()):
                 return "N/A"
             return v if v else "N/A"
@@ -171,7 +145,6 @@ def ensure_officials_open(page, log):
                 header.click()
                 time.sleep(1.5)
             return
-        # No labelled panel found — try the first expansion header
         header = page.query_selector("mat-expansion-panel-header")
         if header:
             cls  = header.get_attribute("class") or ""
@@ -225,12 +198,16 @@ def scrape_dot(page, dot, log):
 
 # ─── Pipeline ─────────────────────────────────────────────────────────────────
 
-def run_pipeline(dot_numbers, filepath, headless, log):
+def run_pipeline(dot_numbers, filepath, log):
     records = []
     log(f"[⚡] Pipeline start — {len(dot_numbers)} DOT number(s)")
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=headless)
+        # Optimized with standard flags to run inside Linux cloud instances smoothly
+        browser = pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        )
         ctx     = browser.new_context(user_agent=USER_AGENT)
         page    = ctx.new_page()
 
@@ -253,8 +230,10 @@ def run_pipeline(dot_numbers, filepath, headless, log):
     if records:
         write_excel(records, filepath, log)
         log(f"\n[✅] Done — {len(records)} record(s) exported.")
+        return True
     else:
         log("[⚠] No records to export.")
+        return False
 
 
 # ─── Excel writer ─────────────────────────────────────────────────────────────
@@ -306,159 +285,102 @@ def write_excel(records, filepath, log):
     ws.row_dimensions[1].height = 30
     ws.freeze_panes = "A2"
 
-    try:
-        wb.save(filepath)
-        log(f"[✓] Saved: {filepath}")
-    except PermissionError:
-        ts        = int(time.time())
-        base, ext = os.path.splitext(filepath)
-        fallback  = f"{base}_{ts}{ext}"
-        wb.save(fallback)
-        log(f"[⚠] File locked — fallback: {fallback}")
-        messagebox.showwarning("File Locked",
-            f"The target file was open in Excel.\nFallback saved:\n{fallback}")
+    wb.save(filepath)
+    log(f"[✓] Formatted output generated.")
 
 
-# ─── GUI ──────────────────────────────────────────────────────────────────────
+# ─── Streamlit Web UI Layout ──────────────────────────────────────────────────
 
-class App(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("USDOT Intelligence Scraper — TTM Dispatch")
-        self.geometry("860x720")
-        self.resizable(True, True)
-        self.configure(bg="#2b2b2b")
-        self._build_ui()
+st.set_page_config(
+    page_title="TTM Engine | USDOT Scraper",
+    page_icon="🚛",
+    layout="wide"
+)
 
-    def _build_ui(self):
-        pad = dict(padx=12, pady=6)
+# High-Contrast Professional Custom Styling Injector
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+    .main { background-color: #0f111a; color: #ffffff; font-family: 'Poppins', sans-serif; }
+    h1, h2, h3 { color: #ff3333 !important; font-family: 'Poppins', sans-serif; font-weight: 700; }
+    .stButton>button {
+        background-color: #1F4E78 !important; color: white !important;
+        font-weight: bold; border-radius: 4px; border: none; width: 100%; height: 45px; transition: 0.3s;
+    }
+    .stButton>button:hover { background-color: #2d6fa3 !important; }
+    div[data-testid="stFrameMutedContainer"] { background-color: #1a1c24 !important; border: 1px solid #333; }
+    iframe { background-color: #1e1e1e !important; }
+    </style>
+""", unsafe_allow_html=True)
 
-        tk.Label(self, text="⚡ USDOT Intelligence Scraper",
-                 font=("Segoe UI", 16, "bold"), fg="#4fc3f7", bg="#2b2b2b"
-                 ).pack(pady=(14, 2))
-        tk.Label(self, text="TTM Dispatch Automation Suite",
-                 font=("Segoe UI", 9), fg="#888888", bg="#2b2b2b"
-                 ).pack(pady=(0, 10))
+st.title("⚡ USDOT Intelligence Scraper")
+st.caption("TTM Dispatch Automation Suite — Cloud Terminal Instance")
+st.markdown("---")
 
-        cfg = tk.LabelFrame(self, text=" Output Configuration ",
-                            font=("Segoe UI", 9, "bold"), fg="#aaaaaa",
-                            bg="#2b2b2b", bd=1, relief="groove")
-        cfg.pack(fill="x", **pad)
+# UI Configuration Split Setup
+col_left, col_right = st.columns([2, 1])
 
-        row0 = tk.Frame(cfg, bg="#2b2b2b")
-        row0.pack(fill="x", padx=8, pady=6)
+with col_right:
+    st.markdown("### ⚙️ Output Configuration")
+    filename_input = st.text_input("Output Filename:", value="DOT_Business_Data.xlsx")
+    if not filename_input.endswith(".xlsx"):
+        filename_input += ".xlsx"
+    
+    st.info("💡 **Cloud Environment Mode:** Files are written securely inside the server session, compile formatting rules dynamically, and return directly to your browser download directory instantly.")
 
-        tk.Label(row0, text="Filename:", fg="#cccccc", bg="#2b2b2b",
-                 font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w", padx=(0,6))
-        self.filename_var = tk.StringVar(value="DOT_Business_Data.xlsx")
-        tk.Entry(row0, textvariable=self.filename_var, width=32,
-                 bg="#3c3c3c", fg="#ffffff", insertbackground="white",
-                 relief="flat", font=("Consolas", 9)
-                 ).grid(row=0, column=1, sticky="w")
+with col_left:
+    st.markdown("### 📋 Target Inputs")
+    raw_dot_input = st.text_area("DOT Numbers (One entry per line text stream):", value="4581886", height=180)
 
-        tk.Label(row0, text="   Dir:", fg="#cccccc", bg="#2b2b2b",
-                 font=("Segoe UI", 9)).grid(row=0, column=2, sticky="w", padx=(12,6))
-        self.dir_var = tk.StringVar(value=os.path.expanduser("~\\Desktop"))
-        tk.Entry(row0, textvariable=self.dir_var, width=26,
-                 bg="#3c3c3c", fg="#ffffff", insertbackground="white",
-                 relief="flat", font=("Consolas", 9)
-                 ).grid(row=0, column=3, sticky="w")
-        tk.Button(row0, text="Browse…", command=self._browse,
-                  bg="#1F4E78", fg="white", relief="flat",
-                  font=("Segoe UI", 8), cursor="hand2",
-                  activebackground="#2d6fa3"
-                  ).grid(row=0, column=4, padx=(6,0))
+st.markdown("---")
 
-        self.headless_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(row0, text="Headless", variable=self.headless_var,
-                       fg="#cccccc", bg="#2b2b2b", selectcolor="#3c3c3c",
-                       activebackground="#2b2b2b", activeforeground="white",
-                       font=("Segoe UI", 9)
-                       ).grid(row=0, column=5, padx=(16,0))
+# Streamlit-compatible Logging Architecture Block
+st.markdown("### 📜 System Activity Log")
+log_container = st.empty()
 
-        inp = tk.LabelFrame(self, text=" DOT Numbers (one per line) ",
-                            font=("Segoe UI", 9, "bold"), fg="#aaaaaa",
-                            bg="#2b2b2b", bd=1, relief="groove")
-        inp.pack(fill="both", expand=False, **pad)
+# Persistent tracking initialization for updates
+if "log_history" not in st.session_state:
+    st.session_state.log_history = []
 
-        self.dot_input = scrolledtext.ScrolledText(
-            inp, height=8, bg="#1e1e1e", fg="#d4d4d4",
-            insertbackground="white", font=("Consolas", 10),
-            relief="flat", wrap="none"
-        )
-        self.dot_input.pack(fill="both", expand=True, padx=8, pady=6)
-        self.dot_input.insert("1.0", "4581886\n")
+def web_log_writer(msg):
+    ts = datetime.now().strftime("%H:%M:%S")
+    formatted_line = f"[{ts}] {msg}"
+    st.session_state.log_history.append(formatted_line)
+    # Output directly inside scrolling window
+    log_container.code("\n".join(st.session_state.log_history), language="text")
 
-        self.start_btn = tk.Button(
-            self, text="⚡   Start Scraping Pipeline",
-            command=self._launch,
-            bg="#1F4E78", fg="white", activebackground="#2d6fa3",
-            font=("Segoe UI", 11, "bold"), relief="flat",
-            cursor="hand2", pady=8
-        )
-        self.start_btn.pack(fill="x", padx=12, pady=(4, 2))
+# Render historical records upon layout state shifts
+if st.session_state.log_history:
+    log_container.code("\n".join(st.session_state.log_history), language="text")
 
-        log_frame = tk.LabelFrame(self, text=" System Activity Log ",
-                                  font=("Segoe UI", 9, "bold"), fg="#aaaaaa",
-                                  bg="#2b2b2b", bd=1, relief="groove")
-        log_frame.pack(fill="both", expand=True, **pad)
-
-        self.log_box = scrolledtext.ScrolledText(
-            log_frame, bg="#1e1e1e", fg="#d4d4d4",
-            insertbackground="white", font=("Consolas", 9),
-            relief="flat", state="disabled"
-        )
-        self.log_box.pack(fill="both", expand=True, padx=8, pady=6)
-        self.log_box.tag_config("ok",   foreground="#4ec9b0")
-        self.log_box.tag_config("warn", foreground="#dcdcaa")
-        self.log_box.tag_config("err",  foreground="#f48771")
-        self.log_box.tag_config("info", foreground="#9cdcfe")
-
-    def _browse(self):
-        d = filedialog.askdirectory(initialdir=self.dir_var.get())
-        if d:
-            self.dir_var.set(d)
-
-    def _log(self, msg):
-        def _write():
-            self.log_box.config(state="normal")
-            ts = datetime.now().strftime("%H:%M:%S")
-            line = f"[{ts}] {msg}\n"
-            tag = "info"
-            if any(x in msg for x in ["[✓]", "[✅]"]):  tag = "ok"
-            elif any(x in msg for x in ["[⚠]", "[!]"]): tag = "warn"
-            elif "[✗]" in msg:                           tag = "err"
-            self.log_box.insert("end", line, tag)
-            self.log_box.see("end")
-            self.log_box.config(state="disabled")
-        self.after(0, _write)
-
-    def _launch(self):
-        raw = self.dot_input.get("1.0", "end").strip()
-        dots = [d.strip() for d in raw.splitlines() if d.strip()]
-        if not dots:
-            messagebox.showwarning("No Input", "Enter at least one DOT number.")
-            return
-
-        fname = self.filename_var.get().strip()
-        if not fname.endswith(".xlsx"):
-            fname += ".xlsx"
-        filepath = os.path.join(self.dir_var.get(), fname)
-
-        self.start_btn.config(state="disabled", text="⏳   Running…")
-        self.log_box.config(state="normal")
-        self.log_box.delete("1.0", "end")
-        self.log_box.config(state="disabled")
-
-        def worker():
+# Trigger Action Routine Block
+if st.button("⚡   Start Scraping Pipeline"):
+    dots_list = [d.strip() for d in raw_dot_input.splitlines() if d.strip()]
+    
+    if not dots_list:
+        st.error("Missing Parameter: Please supply one or more DOT sequence items before initiating run pipelines.")
+    else:
+        st.session_state.log_history = [] # Reset old logs on new run
+        temp_filepath = "cloud_output.xlsx"
+        
+        # Execute underlying synchronous target sequence steps
+        success = run_pipeline(dots_list, temp_filepath, web_log_writer)
+        
+        if success and os.path.exists(temp_filepath):
+            with open(temp_filepath, "rb") as f:
+                excel_bytes = f.read()
+            
+            st.markdown("---")
+            st.success("🎉 Data capture sequence finalized cleanly!")
+            st.download_button(
+                label="📥 DOWNLOAD FORMATTED DOT INTELLIGENCE SHEET",
+                data=excel_bytes,
+                file_name=filename_input,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            # Clean server memory temp files
             try:
-                run_pipeline(dots, filepath, self.headless_var.get(), self._log)
-            finally:
-                self.after(0, lambda: self.start_btn.config(
-                    state="normal", text="⚡   Start Scraping Pipeline"))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-
-if __name__ == "__main__":
-    App().mainloop()
+                os.remove(temp_filepath)
+            except:
+                pass
